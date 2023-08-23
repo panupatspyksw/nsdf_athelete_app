@@ -1,10 +1,25 @@
 {
   "expo": {
-    "name": "nsdfapp-neww",
-    "slug": "nsdfapp-neww",
+    "name": "nsdf_athelete_app",
+    "slug": "nsdf_athelete_app",
     "version": "1.0.0",
     "assetBundlePatterns": [
       "**/*"
+    ],
+    "ios": {
+      "googleServicesFile": "./GoogleService-Info.plist"
+    },
+    "plugins": [
+      "./node_modules/expo-sample-pedometer/expo-sample-pedometer-plugin.js",
+      "@react-native-firebase/app",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ]
     ]
   }
 }

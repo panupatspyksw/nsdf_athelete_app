@@ -1,0 +1,299 @@
+# This file contains the fastlane.tools configuration
+# You can find the documentation at https://docs.fastlane.tools
+#
+# For a list of all available actions, check out
+#
+#     https://docs.fastlane.tools/actions
+#
+# For a list of all available plugins, check out
+#
+#     https://docs.fastlane.tools/plugins/available-plugins
+#
+
+# Uncomment the line if you want fastlane to automatically update itself
+# update_fastlane
+
+default_platform(:ios)
+MATCH_GIT_URL = "git@gitlab.com:punjasindev/smartathele.git"
+  IPA_FILE = "smartathele-release.ipa"
+
+TEAM_ID_FIRED = "ZK429JFDU4"
+
+MATCH_GIT_BRANCH = "ios-cert"
+    RELEASE_SCHEME = "SmartAthlete"
+
+    MATCH_APPSTORE_PROFILE = "match AppStore com.gsmartthailand.nsdf1"
+APP_ID = "com.gsmartthailand.nsdf1"
+
+ENV["MATCH_PASSWORD"] = "ZK429JFDU4"
+
+
+ EXPORT_METHOD_APPSTORE = "app-store"
+  CODE_SIGN_IDENTITY = "iPhone Distribution"
+
+
+platform :ios do
+
+
+       XCODEPROJ_PATH = "../ios/SmartAthlete.xcodeproj"
+       XCODEWORKSPACE_PATH = "../ios/SmartAthlete.xcworkspace"
+
+
+desc "Create new Release Branch"
+lane :merge_develop_into_master do
+
+  #Stash any changes before checking out master
+  sh("git", "add", ".")
+  sh("git", "stash")
+  sh("git", "checkout", "main")
+  sh("git", "pull", "origin", "develop")
+end
+
+  desc "Perform Version Change"
+  lane :perform_version_change do |options|
+    versionNumber = options[:versionNumber]
+    buildNumber = change_ios_version(versionNumber: versionNumber)
+    change_package_json_version(versionName: versionNumber, versionCode: buildNumber, platform: "ios")
+  end
+
+    desc "Change iOS Version"
+    lane :change_ios_version do |options|
+      versionNumber = options[:versionNumber]
+      increment_version_number(
+        version_number: versionNumber,
+        xcodeproj: XCODEPROJ_PATH
+      )
+      increment_build_number(xcodeproj: XCODEPROJ_PATH)
+    end
+
+desc "Change package.json version"
+lane :change_package_json_version do |options|
+  versionName = options[:versionName]
+  versionCode = options[:versionCode]
+  platform = options[:platform]
+  releaseMessage = "#{platform.capitalize} Release #{platform == "ios" ? "versionNumber" : "versionName"} #{versionName}, #{platform == "ios" ? "buildNumber" : "versionCode"} #{versionCode}"
+  Dir.chdir("../..") do
+    sh("git", "add", ".")
+    sh("git", "commit", "-m", releaseMessage)
+    sh("git", "tag", "-a", "#{platform}/#{versionName}-#{versionCode}", "-m", releaseMessage)
+    sh("git", "push", MATCH_GIT_URL, "main")
+    #Do not run CI jobs as we all tests need to be green in develop and master anyway
+    sh("git", "push", MATCH_GIT_URL, "--tags")
+    sh("git", "checkout", "develop")
+    sh("git", "pull")
+    sh("git", "merge", "main")
+    sh("git", "push", MATCH_GIT_URL, "develop")
+  end
+end
+
+
+desc "nuke new cert"
+lane :nuke do |options|
+  # Stuff to retrieve the team config (repo, branch, team, team_id, username)
+  cli = "yes y| fastlane match nuke development --git_url #{MATCH_GIT_URL} --git_branch #{MATCH_GIT_BRANCH} -u #{DEV_USERNAME} -b #{TEAM_ID_FIRED}"
+  sh(cli)
+    cli = "yes y| fastlane match nuke enterprise --git_url #{MATCH_GIT_URL} --git_branch #{MATCH_GIT_BRANCH} -u #{DEV_USERNAME} -b #{TEAM_ID_FIRED}"
+    sh(cli)
+      cli = "yes y| fastlane match nuke distribution --git_url #{MATCH_GIT_URL} --git_branch #{MATCH_GIT_BRANCH} -u #{DEV_USERNAME} -b #{TEAM_ID_FIRED}"
+      sh(cli)
+      end
+
+  desc "Build iOS App"
+  lane :build_app_ios do |options|
+    appId = options[:appId]
+    profile = options[:profile]
+    scheme = options[:scheme]
+    output_name = options[:output_name]
+    export_method = options[:export_method]
+    build_ios_app(
+      workspace: XCODEWORKSPACE_PATH,
+      scheme: scheme,
+      output_directory: "fastlane",
+      output_name: output_name,
+      export_method: export_method,
+      export_options: {
+        provisioningProfiles: {
+          appId => profile
+        }
+      },
+      xcargs: {
+        :BUNDLE_IDENTIFIER => appId,
+        :PROVISIONING_PROFILE_SPECIFIER => profile,
+        :DEVELOPMENT_TEAM => TEAM_ID_FIRED,
+      }
+    )
+  end
+
+  desc "Build App iOS AppStore"
+  lane :release do |options|
+                               versionNumber = options[:versionNumber]
+                               if versionNumber.nil?
+                                 UI.important "no versionNumber perform build on current version"
+                               else
+
+                                  perform_version_change(versionNumber: versionNumber)
+                               end
+
+
+  merge_develop_into_master()
+    build_app_ios(
+      appId: APP_ID,
+      scheme: RELEASE_SCHEME,
+            profile: MATCH_APPSTORE_PROFILE,
+      output_name: IPA_FILE,
+      export_method: EXPORT_METHOD_APPSTORE
+    )
+
+   api_key = app_store_connect_api_key(
+        key_id: "ZU87CJU28Y",
+        issuer_id: "69a6de76-a9a0-47e3-e053-5b8c7c11a4d1",
+        key_filepath: "./AuthKey_ZU87CJU28Y.p8",
+        duration: 1200, # optional (maximum 1200)
+        in_house: false # optional but may be required if using match/sigh
+      )
+
+    IPA_SG_RELEASE_PATH = "./fastlane/#{IPA_FILE}"
+        IPA_SG_APPSTORE_RELEASE_PATH = "./fastlane/#{IPA_FILE}"
+        upload_to_testflight(
+        api_key: api_key,
+            app_identifier: APP_ID,
+            team_id: TEAM_ID_FIRED,
+            ipa: IPA_SG_RELEASE_PATH,
+            apple_id: "6447462447"
+          )
+
+   sh("git", "checkout", "develop")
+  end
+
+  desc "Nuke All"
+  lane :nukeall do |options|
+   api_key = app_store_connect_api_key(
+        key_id: "ZU87CJU28Y",
+        issuer_id: "69a6de76-a9a0-47e3-e053-5b8c7c11a4d1",
+        key_filepath: "./AuthKey_ZU87CJU28Y.p8",
+        duration: 1200, # optional (maximum 1200)
+        in_house: false # optional but may be required if using match/sigh
+      )
+
+    APP_IDENTIFIERS = [
+ APP_ID
+    ]
+
+    keychain_password = options[:keychain_password]
+    is_create = options[:create]
+
+
+    match_nuke(
+        app_identifier: APP_IDENTIFIERS,
+        git_url: MATCH_GIT_URL,
+        type: "development",
+        api_key:api_key,
+        git_branch: MATCH_GIT_BRANCH,
+        team_id: TEAM_ID_FIRED,
+        keychain_password: keychain_password,
+        readonly: !is_create,
+        force_for_new_devices: is_create
+        )
+      match_nuke(
+        app_identifier: APP_IDENTIFIERS,
+        git_url: MATCH_GIT_URL,
+        type: "appstore",
+        api_key:api_key,
+        git_branch: MATCH_GIT_BRANCH,
+        team_id: TEAM_ID_FIRED,
+        keychain_password: keychain_password,
+        readonly: !is_create,
+        force_for_new_devices: is_create
+        )
+      match_nuke(
+        app_identifier: APP_IDENTIFIERS,
+        git_url: MATCH_GIT_URL,
+        type: "adhoc",
+        api_key:api_key,
+        git_branch: MATCH_GIT_BRANCH,
+        team_id: TEAM_ID_FIRED,
+        keychain_password: keychain_password,
+        readonly: !is_create,
+        force_for_new_devices: is_create
+        )
+  end
+
+
+desc "Register new devices"
+lane :register do
+  device_name = prompt(text: "Enter the device name: ")
+  device_udid = prompt(text: "Enter the device UDID: ")
+  device_hash = {}
+  device_hash[device_name] = device_udid
+   api_key = app_store_connect_api_key(
+        key_id: "ZU87CJU28Y",
+        issuer_id: "69a6de76-a9a0-47e3-e053-5b8c7c11a4d1",
+        key_filepath: "./AuthKey_ZU87CJU28Y.p8",
+        duration: 1200, # optional (maximum 1200)
+        in_house: false # optional but may be required if using match/sigh
+      )
+
+  register_devices(devices: device_hash,
+    team_id: TEAM_ID_FIRED,
+   api_key:api_key,
+   )
+  match(force: true)
+end
+
+  desc "Description of what the lane does"
+  lane :install_signing do |options|
+    APP_IDENTIFIERS = [
+ APP_ID
+    ]
+
+    keychain_password = options[:keychain_password]
+    is_create = options[:create]
+
+
+
+
+ api_key = app_store_connect_api_key(
+      key_id: "ZU87CJU28Y",
+      issuer_id: "69a6de76-a9a0-47e3-e053-5b8c7c11a4d1",
+      key_filepath: "./AuthKey_ZU87CJU28Y.p8",
+      duration: 1200, # optional (maximum 1200)
+      in_house: false # optional but may be required if using match/sigh
+    )
+
+
+    sync_code_signing(
+      app_identifier: APP_IDENTIFIERS,
+      git_url: MATCH_GIT_URL,
+      type: "development",
+      api_key:api_key,
+      git_branch: MATCH_GIT_BRANCH,
+      team_id: TEAM_ID_FIRED,
+      keychain_password: keychain_password,
+      readonly: !is_create,
+      force_for_new_devices: is_create
+      )
+    sync_code_signing(
+      app_identifier: APP_IDENTIFIERS,
+      git_url: MATCH_GIT_URL,
+      type: "appstore",
+      api_key:api_key,
+      git_branch: MATCH_GIT_BRANCH,
+      team_id: TEAM_ID_FIRED,
+      keychain_password: keychain_password,
+      readonly: !is_create,
+      force_for_new_devices: is_create
+      )
+    sync_code_signing(
+      app_identifier: APP_IDENTIFIERS,
+      git_url: MATCH_GIT_URL,
+      type: "adhoc",
+      api_key:api_key,
+      git_branch: MATCH_GIT_BRANCH,
+      team_id: TEAM_ID_FIRED,
+      keychain_password: keychain_password,
+      readonly: !is_create,
+      force_for_new_devices: is_create
+      )
+
+  end
+end
